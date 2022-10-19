@@ -1,0 +1,57 @@
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(karyoploteR)
+library(rtracklayer)
+library(GenomicRanges)
+library(stringr)
+library(magrittr)
+library(dplyr)
+library(data.table)
+chain = rtracklayer::import.chain(“~/tools/liftOver/chain_files/hg38ToHg19.over.chain”)
+ds = fread(“/data03/inamo/nanopore/RNA/210931_PB29_fastq/shiny/data/gwas/COVID19_HGI_A2_GRCh38_short.txt”)
+ds = GRanges(
+  seqnames = paste0(“chr”,str_split(ds$chr_pos, pattern = “_”, simplify = TRUE)[,1]),
+  ranges = IRanges(str_split(ds$chr_pos, pattern = “_”, simplify = TRUE)[,2]),
+  strand = Rle(“*”),
+  pval = ds$pval )
+ds = rtracklayer::liftOver(ds, chain) %>%
+  unlist()
+transf.pval <- -log10(ds$pval)
+points.col <- colByValue(transf.pval, colors=c(“black”, “red”))
+base.url <- “http://hgdownload.soe.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeBroadHistone/”
+histone.marks <- c(H3K4me3=“wgEncodeBroadHistoneK562H3k4me3StdSig.bigWig”,
+                   H3K36me3=“wgEncodeBroadHistoneK562H3k36me3StdSig.bigWig”,
+                   H3K27ac=“wgEncodeBroadHistoneK562H3k27acStdSig.bigWig”,
+                   H3K9ac=“wgEncodeBroadHistoneK562H3k9acStdSig.bigWig”,
+                   H3K27me3=“wgEncodeBroadHistoneK562H3k27me3StdSig.bigWig”)
+png(file=paste0(“~/IL10RA.png”), width = 4500, height = 3500, res=720);
+kp <- plotKaryotype(plot.type=4, zoom=“chr11:117853337-117875971", genome=“hg19”)
+kpAddBaseNumbers(kp, add.units = TRUE, cex=1, tick.dist = 1e6)
+kpAddLabels(kp, labels = paste0(“GWAS -log[p-value]“), srt=90, pos=3, cex=0.4, label.margin = 0.038, r0=0.8, r1=1)
+kpAxis(kp, ymin=0, ymax=15, tick.pos = c(0, -log10(5e-08), 15), r0=0.8, r1=1, cex=0.4)
+kp <- kpPlotManhattan(kp, data=ds,
+                      points.pch=16, points.cex=0.5,
+                      points.col = points.col,
+                      suggestiveline = -log10(1e-05),suggestive.col=“grey”, suggestive.lwd=0,suggestive.lty=2,
+                      genomewideline = -log10(5e-08),genomewide.col=“grey”, genomewide.lwd=1,genomewide.lty=1,
+                      logp=TRUE,
+                      r0=0.8, r1=1,
+                      ymax = 15)
+genes.data <- makeGenesDataFromTxDb(txdb = TxDb.Hsapiens.UCSC.hg19.knownGene,
+                                    karyoplot = kp)
+genes.data <- addGeneNames(genes.data)
+genes.data <- mergeTranscripts(genes.data)
+kpPlotGenes(kp, data=genes.data, add.transcript.names = FALSE, r0=0, r1=0.15, cex=0.6, gene.name.position = “left”)
+#Histone marks
+total.tracks <- length(histone.marks)
+out.at <- autotrack(1:length(histone.marks), total.tracks, margin = 0.3, r0=0.15,r1=0.8)
+for(i in seq_len(length(histone.marks))) {
+  bigwig.file <- paste0(base.url, histone.marks[i])
+  at <- autotrack(i, length(histone.marks), r0=out.at$r0, r1=out.at$r1, margin = 0.1)
+  kp <- kpPlotBigWig(kp, data=bigwig.file, ymax=“visible.region”,
+                     r0=at$r0, r1=at$r1, col = “cadetblue2”)
+  computed.ymax <- ceiling(kp$latest.plot$computed.values$ymax)
+  kpAxis(kp, ymin=0, ymax=computed.ymax, cex=0.4, tick.pos = computed.ymax, r0=at$r0, r1=at$r1)
+  kpAddLabels(kp, labels = names(histone.marks)[i], r0=at$r0, r1=at$r1,
+              srt=90, pos=3, cex=0.4, label.margin = 0.035)
+}
+dev.off()
